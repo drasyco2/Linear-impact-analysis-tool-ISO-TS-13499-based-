@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import plotly.io as pio
 from scipy.integrate import cumulative_trapezoid
 import math
-from numba import jit  # 如未安装numba，可注释掉此行并移除@jit
+from numba import jit
+from datetime import datetime
 
 # ===================== 滤波函数（内嵌） =====================
 def filter_cfc(df, channel, type, append_df=True):
@@ -113,7 +115,6 @@ def process_multi_experiment_files(uploaded_files):
             continue
         else:
             raw_groups[base_name]['data_files'].append(f)
-    # 2. 对每个实验组执行精细化物理数据和元数据解析
     all_experiments = {}
     for exp_id, files in raw_groups.items():
         if not files['data_files']:
@@ -149,7 +150,6 @@ def process_multi_experiment_files(uploaded_files):
                 endpoint=False
             )
             file_suffix = f.name.split('.')[-1]
-            # 抓取当前通道文件内部自带的含义描述
             raw_channel_meaning = metadata.get('name of the channel', f"Channel_{file_suffix}")
             raw_unit = metadata.get('unit', '未知')
             channels_dict[file_suffix] = {
@@ -160,7 +160,6 @@ def process_multi_experiment_files(uploaded_files):
                 'unit': raw_unit,
                 'default_name': f"通道 {file_suffix}"
             }
-        # 3. 结合外部 .chn 文件或内部元数据提取具体含义 (满足需求 2：展示通道对应意义)
         if files['chn'] and channels_dict:
             chn_lines = files['chn'].getvalue().decode('utf-8', errors='ignore').splitlines()
             sorted_suffixes = sorted(channels_dict.keys())
@@ -171,7 +170,6 @@ def process_multi_experiment_files(uploaded_files):
                         chn_names.append(line[29:45].strip())
                     elif len(line) > 29:
                         chn_names.append(line[29:].strip())
-            
             for idx, suffix in enumerate(sorted_suffixes):
                 ch_info = channels_dict[suffix]
                 if idx < len(chn_names):
@@ -188,7 +186,7 @@ def process_multi_experiment_files(uploaded_files):
 # ===================== 侧边栏：文件导入 =====================
 st.sidebar.header("📁 数据导入中心")
 uploaded_files = st.sidebar.file_uploader(
-    "同时拖入mme、chn和对应通道里所有通道所有文件，支持拖入多次实验的全部组件文件：", 
+    "同时拖入mme、chn和对应通道里所有通道所有文件，支持拖入多次实验的全部组件文件：",
     accept_multiple_files=True
 )
 all_experiments = process_multi_experiment_files(uploaded_files)
@@ -196,8 +194,6 @@ all_experiments = process_multi_experiment_files(uploaded_files)
 if not all_experiments:
     st.info("💡 提示：请在左侧边栏上传试验数据集（包含 MME、chn、数据通道后缀等文件）以激活数据视图。")
 else:
-
-    
     # ===================== 控制区 =====================
     st.sidebar.header("📋控制区间")
     st.sidebar.markdown("### 🎯 核心分析实验与控制参数设定")
@@ -262,8 +258,8 @@ else:
     color_cycle = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
     exp_color_map = {exp_name: color_cycle[i % len(color_cycle)] for i, exp_name in enumerate(selected_exps)}
 
-    results = {}               # 存储六种物理量
-    all_extra_data = {}        # 存储所有实验的所有通道裁剪数据 {exp_name: {ch_name: {'time':..., 'value':...}}}
+    results = {}
+    all_extra_data = {}
 
     for exp_name in selected_exps:
         exp_data = all_experiments[exp_name]
@@ -294,15 +290,11 @@ else:
         # 物理量计算
         v0 = v0_inputs[exp_name]
         acc_m_s2 = acc_cropped * g_factor
-        
-        # 速度一阶积分 (梯形公式)
         vel_delta = cumulative_trapezoid(acc_m_s2, dx=dt_exp, initial=0)
         if reverse_integration:
             vel_cropped = v0 - vel_delta
         else:
             vel_cropped = v0 + vel_delta
-        
-        # 位移二阶积分 (梯形公式)
         disp_cropped = cumulative_trapezoid(vel_cropped, dx=dt_exp, initial=0)
         force_cropped = acc_m_s2 * mass_kg
         energy_cropped = cumulative_trapezoid(force_cropped, disp_cropped, initial=0)
@@ -331,14 +323,13 @@ else:
     if not results:
         st.error("所有选定实验均无法计算，请检查通道选择。")
         st.stop()
-        # ------------------------------------------
-    
+
     # ===================== 绘图 =====================
     st.markdown("---")
     st.subheader("📊 八面展示曲线对比看板（多实验叠加）")
 
-    # 获取所有通道名称（用于额外通道下拉框）
     all_channel_names = sorted(list(next(iter(all_extra_data.values())).keys())) if all_extra_data else []
+
 
     def create_figure(x_key, y_key, x_label, y_label, title, use_results=True, extra_ch_name=None):
         fig = go.Figure()
@@ -362,14 +353,31 @@ else:
                         name=exp_name,
                         line=dict(color=color, width=2)
                     ))
+
+        # 设置 x 轴刻度间隔（如果有）
         if dtick is not None:
             fig.update_xaxes(dtick=dtick)
+
+        # 横轴样式：标题字体、刻度字体、标题与轴线间距
+        fig.update_xaxes(
+            title_font=dict(size=12),  # 横轴标题字体大小
+            tickfont=dict(size=10),  # 横轴刻度字体大小
+            title_standoff=15  # 标题与轴线之间的像素距离（防止重叠）
+        )
+        # 纵轴样式（与横轴保持一致）
+        fig.update_yaxes(
+            title_font=dict(size=12),
+            tickfont=dict(size=10)
+        )
+
+        # 整体布局：增大底部边距，为横轴留足空间
         fig.update_layout(
             title=title,
             xaxis_title=x_label,
             yaxis_title=y_label,
-            margin=dict(l=10, r=10, t=30, b=10),
+            margin=dict(l=60, r=60, t=30, b=80),  # 底部边距增加到80px
             height=320,
+            font=dict(size=11),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         return fig
@@ -407,7 +415,6 @@ else:
     st.markdown("---")
     st.subheader("📊 额外通道对比（可自由选择通道）")
 
-    # 第7页
     col7, col8 = st.columns(2)
     with col7:
         st.markdown("**7. 额外通道对比**")
@@ -415,13 +422,109 @@ else:
         fig7 = create_figure(None, None, "时间 Time (s)", selected_extra_1, "", use_results=False, extra_ch_name=selected_extra_1)
         st.plotly_chart(fig7, use_container_width=True)
 
-    # 第8页
     with col8:
         st.markdown("**8. 额外通道对比**")
         selected_extra_2 = st.selectbox("选择第8页显示的通道：", options=all_channel_names, key="extra2")
         fig8 = create_figure(None, None, "时间 Time (s)", selected_extra_2, "", use_results=False, extra_ch_name=selected_extra_2)
         st.plotly_chart(fig8, use_container_width=True)
 
+    # ===================== 保存为 HTML 报告 =====================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 💾 保存报告")
+    if st.sidebar.button("💾 保存当前看板为 HTML 报告"):
+        # 收集所有图表和标题
+        figs = [fig1, fig2, fig3, fig4, fig5, fig6, fig7, fig8]
+        titles = [
+            "1. 加速度曲线 vs 时间",
+            "2. 速度曲线 vs 时间",
+            "3. 位移曲线 vs 时间",
+            "4. 力曲线 vs 时间",
+            "5. 弹性表现曲线 (力 vs 位移)",
+            "6. 吸能曲线 (能量 vs 位移)",
+            f"7. {selected_extra_1} 对比",
+            f"8. {selected_extra_2} 对比"
+        ]
+
+        # 构建 HTML 内容
+        html_parts = []
+        html_parts.append("""<!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset='utf-8'>
+    <title>线性冲击实验分析报告</title>
+    <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #f9f9f9; }
+    h1 { color: #333; text-align: center; }
+    h2 { color: #555; font-size: 14px; margin: 0 0 5px 0; }
+    .grid-container {
+        display: grid;
+        gap: 15px;
+        margin-bottom: 20px;
+    }
+    .grid-3col {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .grid-2col {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .plot-card {
+        background: white;
+        padding: 10px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .plot-wrapper {
+        width: 100%;
+        height: 340px; /* 略大于图表高度，避免滚动条 */
+    }
+    .report-info { text-align: center; color: #777; margin-bottom: 20px; }
+    hr { margin: 20px 0; }
+    /* 响应式：小屏幕时自动折叠 */
+    @media (max-width: 1200px) {
+        .grid-3col { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 800px) {
+        .grid-3col, .grid-2col { grid-template-columns: 1fr; }
+    }
+    </style>
+    </head>
+    <body>
+    <h1>线性冲击实验标准分析报告</h1>
+    <div class="report-info">
+    <p>生成时间: """ + datetime.now().strftime('%Y-%m-%d %H:%M:%S') + """</p>
+    <p>实验列表: """ + ", ".join(selected_exps) + """</p>
+    <p>滤波选项: """ + filter_option + """</p>
+    <p>裁剪区间: """ + f"{crop_start:.4f}s ~ {crop_end:.4f}s" + """</p>
+    </div>
+    <hr>
+    """)
+
+        # 前6个图表：2行3列
+        html_parts.append('<div class="grid-container grid-3col">')
+        for i in range(6):
+            html_parts.append(f'<div class="plot-card"><h2>{titles[i]}</h2><div class="plot-wrapper">')
+            html_parts.append(pio.to_html(figs[i], include_plotlyjs=True, full_html=False))
+            html_parts.append('</div></div>')
+        html_parts.append('</div>')
+
+        # 后2个图表：1行2列
+        html_parts.append('<div class="grid-container grid-2col">')
+        for i in range(6, 8):
+            html_parts.append(f'<div class="plot-card"><h2>{titles[i]}</h2><div class="plot-wrapper">')
+            html_parts.append(pio.to_html(figs[i], include_plotlyjs=True, full_html=False))
+            html_parts.append('</div></div>')
+        html_parts.append('</div>')
+
+        html_parts.append("</body></html>")
+        full_html = "\n".join(html_parts)
+
+        # 提供下载按钮
+        st.sidebar.download_button(
+            label="📥 下载 HTML 报告",
+            data=full_html,
+            file_name=f"crash_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+            mime="text/html"
+        )
     # ===================== 数据导出 =====================
     st.markdown("---")
     st.subheader("📥 经裁剪及积分运算后的完整试验报告数据预览")
@@ -436,7 +539,6 @@ else:
             "冲击力 Force (N)": res['force'],
             "吸能累积 Energy (J)": res['energy']
         })
-        # 添加当前选择的额外通道数据（如果存在）
         if selected_extra_1 in all_extra_data.get(exp_name, {}):
             df_exp[selected_extra_1] = all_extra_data[exp_name][selected_extra_1]['value'][:len(res['time'])]
         if selected_extra_2 in all_extra_data.get(exp_name, {}):
