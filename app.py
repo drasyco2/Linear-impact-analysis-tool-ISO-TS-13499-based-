@@ -207,8 +207,19 @@ with main_tab1:
                 mass_kg = st.number_input("3. 冲击块质量 (Mass, kg)：", value=6.80, step=0.1, key="mass_t1")
                 g_factor = st.number_input("重力加速度系数 (g ➔ m/s²)", value=9.81, step=0.01, key="g_t1")
             with ctrl_col3:
-                v0_input = st.number_input("4. 试验初速度 v0 (m/s)：", value=3.04, step=0.01, key="v0_t1")
-                reverse_integration = st.checkbox("碰撞减速脉冲积分 (v0 - ∫a dt)", value=True, key=f"rev_t1")
+                st.markdown("**4. 各实验初速度 (m/s)**")
+                v0_inputs = {}
+                v0_cols = st.columns(min(len(selected_exps_tab1), 4))
+                for i, exp_name in enumerate(selected_exps_tab1):
+                    col = v0_cols[i % 4]
+                    with col:
+                        v0_inputs[exp_name] = st.number_input(
+                            f"{exp_name}",
+                            value=3.04,
+                            step=0.01,
+                            key=f"v0_{exp_name}_tab1"
+                        )
+                reverse_integration = st.checkbox("碰撞减速脉冲积分 (v0 - ∫a dt)", value=True, key="rev_t1")
             with ctrl_col4:
                 filter_option = st.selectbox("5. 加速度滤波 (CFC)：", ["无滤波", "CFC60", "CFC180"], index=0, key="filt_t1")
                 tick_step = st.selectbox("6. X轴刻度间隔：", ["自动", "10 ms", "20 ms", "50 ms", "100 ms"], index=0, key="tick_t1")
@@ -228,6 +239,7 @@ with main_tab1:
                 color_cycle = ['#636EFA', '#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692']
                 exp_color_map = {exp_name: color_cycle[i % len(color_cycle)] for i, exp_name in enumerate(selected_exps_tab1)}
 
+                # ========== 物理计算（独立循环，不包含 UI） ==========
                 results = {}
                 for exp_name in selected_exps_tab1:
                     exp_data = all_experiments_tab1[exp_name]
@@ -250,7 +262,8 @@ with main_tab1:
 
                     acc_m_s2 = acc_cropped * g_factor
                     vel_delta = cumulative_trapezoid(acc_m_s2, dx=dt_exp, initial=0)
-                    vel_cropped = v0_input - vel_delta if reverse_integration else v0_input + vel_delta
+                    v0 = v0_inputs[exp_name]
+                    vel_cropped = v0 - vel_delta if reverse_integration else v0 + vel_delta
                     disp_cropped = cumulative_trapezoid(vel_cropped, dx=dt_exp, initial=0)
                     force_cropped = acc_m_s2 * mass_kg
                     energy_cropped = cumulative_trapezoid(force_cropped, disp_cropped, initial=0)
@@ -260,6 +273,7 @@ with main_tab1:
                         'disp': disp_cropped, 'force': force_cropped, 'energy': energy_cropped
                     }
 
+                # ========== 图表展示（只执行一次） ==========
                 st.markdown("---")
                 st.subheader("📊 六面展示曲线对比看板（多实验叠加）")
 
@@ -293,6 +307,7 @@ with main_tab1:
                     st.markdown("**6. 吸能曲线 (能量 vs 位移)**")
                     st.plotly_chart(create_figure('disp', 'energy', "位移 Displacement (m)", "吸能量 Energy (J)"), use_container_width=True)
 
+                # ========== 数据导出（只执行一次） ==========
                 st.markdown("---")
                 st.subheader("📥 经裁剪及积分运算后的完整试验报告数据预览")
                 combined_dfs = []
@@ -460,7 +475,7 @@ li strong { color: #111827; }
 <li><strong>激活比对实验场次:</strong> """ + ', '.join(selected_exps_tab1) + """</li>
 <li><strong>基准加速度通道选择:</strong> """ + selected_ac_name + """</li>
 <li><strong>质量载荷:</strong> """ + str(mass_kg) + """ kg &nbsp;&nbsp;|&nbsp;&nbsp; <strong>重力加速度常数:</strong> """ + str(g_factor) + """ m/s²</li>
-<li><strong>设定碰撞初速度:</strong> """ + str(v0_input) + """ m/s &nbsp;&nbsp;|&nbsp;&nbsp; <strong>脉冲反向积分状态:</strong> """ + ('开启' if reverse_integration else '关闭') + """</li>
+<li><strong>各实验初速度:</strong> """ + "; ".join([f"{exp}: {v0_inputs[exp]:.2f} m/s" for exp in selected_exps_tab1]) + """ &nbsp;&nbsp;|&nbsp;&nbsp; <strong>脉冲反向积分状态:</strong> """ + ('开启' if reverse_integration else '关闭') + """</li>
 <li><strong>数据滤波器等级:</strong> """ + filter_option + """ &nbsp;&nbsp;|&nbsp;&nbsp; <strong>时域裁剪区间:</strong> """ + f"{crop_start}s ~ {crop_end}s" + """</li>
 </ul>
 </div>
